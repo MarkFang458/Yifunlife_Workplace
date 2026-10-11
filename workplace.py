@@ -21,7 +21,10 @@ ROLES={'admin':['quote','procurement','aftersales'],'ceo':['quote','procurement'
 
 def init():
     database.init()
-    with database.connect() as db:account_reporting.init(db)
+    with database.connect() as db:
+        account_reporting.init(db)
+        db.execute('CREATE TABLE IF NOT EXISTS account_recovery_requests(email TEXT PRIMARY KEY,requested_at REAL NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS account_recovery_links(token_hash TEXT PRIMARY KEY,email TEXT NOT NULL,expires REAL NOT NULL,created_by TEXT NOT NULL)')
     BRIDGE_PATH.parent.mkdir(parents=True,exist_ok=True)
     if not BRIDGE_PATH.exists():
         BRIDGE_PATH.write_text(secrets.token_urlsafe(48));BRIDGE_PATH.chmod(0o600)
@@ -115,6 +118,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,{'results':database.d1_batch(p.get('statements'))})
             origin=self.headers.get('Origin')
             if origin and origin not in runtime_config.allowed_origins(PORT):raise core.Problem('不允许跨站提交',403)
+            if path=='/api/auth/recovery-request':return self.request_recovery(p)
+            if path=='/api/auth/reset-link':return self.consume_recovery_link(p)
             if path=='/api/auth/recover':return self.recover_account(p)
             if path in ('/api/auth/setup','/api/auth/login'):return self.authenticate(path,p)
             user=self.session()
@@ -135,6 +140,21 @@ class Handler(BaseHTTPRequestHandler):
                     else:parent=None
                     db.execute('UPDATE employee_sessions SET project_id=?,quote_kind=?,parent_order_id=? WHERE token_hash=?',(project['id'] if project else None,kind,parent,user['token_hash']))
                 return self.respond(200,{'ok':True})
+            if path=='/api/employee-recovery-link':
+                core.permit(user,'admin')
+                email=core.text(p.get('email'),'邮箱').lower()
+                if runtime_config.container_mode() and email not in runtime_config.allowed_emails():raise core.Problem('此邮箱未获站点授权',403)
+                raw=secrets.token_urlsafe(32);expires=time.time()+1800
+                with database.connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    target=core.row(db,'SELECT * FROM employees WHERE email=?',(email,))
+                    if not target and (not runtime_config.container_mode() or email not in runtime_config.allowed_emails()):raise core.Problem('账号不存在',404)
+                    if target and target['status']!='active':raise core.Problem('请先恢复账号状态',403)
+                    db.execute('DELETE FROM account_recovery_links WHERE email=? OR expires<?',(email,time.time()))
+                    db.execute('INSERT INTO account_recovery_links VALUES(?,?,?,?)',(hashlib.sha256(raw.encode()).hexdigest(),email,expires,user['id']))
+                    core.audit(db,user,'employee',target['id'] if target else email,'生成一次性账号重置链接',{'email':email,'expires':expires})
+                origin=runtime_config.public_origin() or f'http://127.0.0.1:{PORT}'
+                return self.respond(200,{'url':origin+'/password-recovery#token='+raw,'email':email,'expires':expires})
             if path=='/api/employees':
                 core.permit(user,'admin')
                 with database.connect() as db:
@@ -194,7 +214,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             logging.exception('Request failed');self.respond(500,{'error':'未能完成操作，资料未确认保存。请查看本地运行日志后重试'})
     def get(self,path):
-        assets={'/dashboard.css':'dashboard.css','/operations.js':'operations.js','/operations.css':'operations.css','/':'workplace.html','/workplace.js':'workplace.js','/dashboard.js':'dashboard.js','/workplace.css':'workplace.css','/workplace-theme.css':'workplace-theme.css','/workplace-logo.png':'workplace-logo.png','/workplace-favicon.svg':'workplace-favicon.svg','/workplace-favicon.png':'workplace-favicon.png'}
+        assets={'/password-recovery':'password-recovery.html','/password-recovery.js':'password-recovery.js','/dashboard.css':'dashboard.css','/operations.js':'operations.js','/operations.css':'operations.css','/':'workplace.html','/workplace.js':'workplace.js','/dashboard.js':'dashboard.js','/workplace.css':'workplace.css','/workplace-theme.css':'workplace-theme.css','/workplace-logo.png':'workplace-logo.png','/workplace-favicon.svg':'workplace-favicon.svg','/workplace-favicon.png':'workplace-favicon.png'}
         if path in assets:
             file=ROOT/assets[path];return self.respond(200,file.read_bytes(),mimetypes.guess_type(file)[0] or 'application/octet-stream')
         if path in ('/centers.js','/centers.css','/connections.js'):
@@ -242,6 +262,11 @@ class Handler(BaseHTTPRequestHandler):
             query=parse_qs(urlparse(self.path).query)
             with database.connect() as db:access.require(db,user,query.get('entity',[''])[0],query.get('id',[''])[0])
             return self.respond(200,{'ok':True})
+        if path=='/api/recovery-requests':
+            core.permit(user,'admin')
+            with database.connect() as db:
+                items=[dict(row) for row in db.execute('SELECT email,requested_at FROM account_recovery_requests ORDER BY requested_at DESC')]
+            return self.respond(200,{'items':items})
         if path=='/api/employees':
             core.permit(user,'admin')
             with database.connect() as db:
@@ -291,29 +316,55 @@ class Handler(BaseHTTPRequestHandler):
             with database.connect() as db:result=core.view(db,user,path.rsplit('/',1)[1],project)
             return self.respond(200,result)
         raise core.Problem('页面不存在',404)
+    def request_recovery(self,p):
+        email=core.text(p.get('email'),'邮箱').lower()
+        if len(email)>254 or '@' not in email:raise core.Problem('请填写有效邮箱')
+        with database.connect() as db:
+            permitted=email in runtime_config.allowed_emails() if runtime_config.container_mode() else bool(db.execute('SELECT 1 FROM employees WHERE email=?',(email,)).fetchone())
+            if permitted:
+                db.execute('INSERT INTO account_recovery_requests VALUES(?,?) ON CONFLICT(email) DO UPDATE SET requested_at=CASE WHEN requested_at<? THEN excluded.requested_at ELSE requested_at END',(email,time.time(),time.time()-900))
+        return self.respond(200,{'ok':True,'message':'申请已提交，请联系管理员获取一次性重置链接。'})
+
+    def set_recovery_password(self,db,identity,p):
+        secret=password(p.get('password'))
+        if secret!=p.get('confirm'):raise core.Problem('两次密码输入不一致')
+        user=core.row(db,'SELECT * FROM employees WHERE email=?',(identity,))
+        if user:
+            if user['status']!='active':raise core.Problem('账号已停用，请联系管理员',403)
+            salt=secrets.token_hex(16)
+            db.execute('UPDATE employees SET password_hash=?,salt=? WHERE id=?',(password_hash(secret,salt),salt,user['id']))
+            db.execute('DELETE FROM employee_sessions WHERE user_id=?',(user['id'],))
+            db.execute('DELETE FROM login_attempts WHERE email=?',(identity,))
+        else:
+            owner=identity==runtime_config.owner_email()
+            if not owner and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('请先恢复管理员账号',409)
+            user=add_employee(db,{'email':identity,'name':core.text(p.get('name'),'姓名'),'password':secret,'role':'ceo'},owner)
+            core.shadow_user(db,user)
+            if owner:
+                import demo_data
+                demo_data.seed(db,user)
+        db.execute('DELETE FROM account_recovery_links WHERE email=?',(identity,))
+        db.execute('DELETE FROM account_recovery_requests WHERE email=?',(identity,))
+        core.audit(db,user,'employee',user['id'],'设置账号恢复密码',{})
+
+    def consume_recovery_link(self,p):
+        raw=p.get('token')
+        if not isinstance(raw,str) or not 40<=len(raw)<=100:raise core.Problem('重置链接无效或已过期',403)
+        digest=hashlib.sha256(raw.encode()).hexdigest()
+        with database.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            link=core.row(db,'SELECT * FROM account_recovery_links WHERE token_hash=? AND expires>?',(digest,time.time()))
+            if not link:raise core.Problem('重置链接无效、已使用或已过期，请联系管理员',403)
+            if runtime_config.container_mode() and link['email'] not in runtime_config.allowed_emails():raise core.Problem('账号未获授权',403)
+            self.set_recovery_password(db,link['email'],p)
+        return self.respond(200,{'ok':True})
+
     def recover_account(self,p):
         identity=runtime_config.verified_email(self.headers)
         if not runtime_config.container_mode() or not identity:raise core.Problem('请先验证账号邮箱',403)
-        secret=password(p.get('password'))
-        if secret!=p.get('confirm'):raise core.Problem('两次密码输入不一致')
         with database.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            user=core.row(db,'SELECT * FROM employees WHERE email=?',(identity,))
-            if user:
-                if user['status']!='active':raise core.Problem('账号已停用，请联系管理员',403)
-                salt=secrets.token_hex(16)
-                db.execute('UPDATE employees SET password_hash=?,salt=? WHERE id=?',(password_hash(secret,salt),salt,user['id']))
-                db.execute('DELETE FROM employee_sessions WHERE user_id=?',(user['id'],))
-                db.execute('DELETE FROM login_attempts WHERE email=?',(identity,))
-            else:
-                owner=identity==runtime_config.owner_email()
-                if not owner and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('请先恢复管理员账号',409)
-                user=add_employee(db,{'email':identity,'name':core.text(p.get('name'),'姓名'),'password':secret,'role':'ceo'},owner)
-                core.shadow_user(db,user)
-                if owner:
-                    import demo_data
-                    demo_data.seed(db,user)
-            core.audit(db,user,'employee',user['id'],'邮箱验证后设置账号密码',{})
+            self.set_recovery_password(db,identity,p)
         return self.respond(200,{'ok':True})
 
     def authenticate(self,path,p):
