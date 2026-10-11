@@ -74,7 +74,7 @@ async function render(){workplacePageUrl();const current=++renderGeneration;cons
  if(center&&!wasCenter)$('#center-back').focus();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-current',(b.dataset.center?b.dataset.center===section?.id:b.dataset.centerGroup?b.dataset.centerGroup===group?.pages[0][0]:b.dataset.view===view)?'page':'false'));const el=$('#content');el.className='';if(wasCenter&&!center)el.focus();
  if(view==='quote-entry'){el.style.padding='';el.innerHTML=quoteEntry();return;}
  if(view==='quote'&&state?.online_quote){el.style.padding='';await renderOnlineQuote(el,current);return;}
- if(modules[view]){el.className='module-area';el.innerHTML=`<iframe title="${modules[view].name}" src="http://127.0.0.1:${modules[view].port}/?workspace=1${esc(moduleLink)}"></iframe>`;el.style.padding='0';return;}
+ if(modules[view]){el.className='module-area';el.innerHTML=`<iframe title="${modules[view].name}" src="${esc(session?.module_urls?.[view]||`http://127.0.0.1:${modules[view].port}/`)}?workspace=1${esc(moduleLink)}"></iframe>`;el.style.padding='0';return;}
  el.style.padding='';
  if(view==='center-marketing-spend'||view==='center-design-records'){await renderCenterRecords(el,view,current);return;}
  if(view==='center-marketing-leads'){await renderOperations(el,'leads',current);return;}
@@ -166,4 +166,4 @@ async function action(name,id){
 }
 start().catch(err=>{$('#app').innerHTML=empty('暂时无法连接工作平台','请确认本地启动窗口仍在运行，再刷新页面。');notify(err.message);});
 
-window.addEventListener('message',async event=>{if(!['http://127.0.0.1:8991','http://127.0.0.1:8992','http://127.0.0.1:8993'].includes(event.origin)||!session?.authenticated)return;try{if(event.data?.type==='workplace-logout'){await action('logout','');return;}if(event.data?.type==='workplace-navigate'&&['employees','account'].includes(event.data.view)){if(event.data.view==='employees'&&!can('admin')){notify('员工账号由管理员在总入口维护');return;}view=event.data.view;await render();}}catch(err){notify(err.message);}});
+window.addEventListener('message',async event=>{if(event.source!==document.querySelector('#content iframe')?.contentWindow||!Object.values(session?.module_urls||{}).map(url=>new URL(url).origin).includes(event.origin)||!session?.authenticated)return;try{if(event.data?.type==='workplace-logout'){await action('logout','');return;}if(event.data?.type==='workplace-navigate'&&['employees','account'].includes(event.data.view)){if(event.data.view==='employees'&&!can('admin')){notify('员工账号由管理员在总入口维护');return;}view=event.data.view;await render();}}catch(err){notify(err.message);}});

@@ -12,6 +12,7 @@ import operations
 import centers
 import connections
 import account_reporting
+import runtime_config
 ROOT=database.ROOT
 PORT=int(os.environ.get('YIFUN_PORT','8975'))
 BRIDGE_PATH=database.DATA_ROOT/'secrets/bridge.key'
@@ -47,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args):
         if args and ('/internal/database' in str(args[0]) or '/api/internal/session' in str(args[0])):return
         logging.info('%s %s',self.address_string(),fmt%args)
-    def allowed(self):return self.headers.get('Host','') in (f'127.0.0.1:{PORT}',f'localhost:{PORT}')
+    def allowed(self):return self.headers.get('Host','') in runtime_config.allowed_hosts(PORT)
     def bridge(self):return hmac.compare_digest(self.headers.get('X-Workspace-Bridge',''),BRIDGE_PATH.read_text())
     def session(self):
         cookie=SimpleCookie()
@@ -55,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:return None
         if not token:
             config = ROOT/'data/local-admin.json'
-            if not config.exists() or self.client_address[0] != '127.0.0.1' or not self.allowed():
+            if runtime_config.public_origin() or not config.exists() or self.client_address[0] != '127.0.0.1' or not self.allowed():
                 return None
             origin = self.headers.get('Origin')
             if origin and origin not in (f'http://127.0.0.1:{PORT}', f'http://localhost:{PORT}'):
@@ -71,12 +72,12 @@ class Handler(BaseHTTPRequestHandler):
                 expires = time.time()+8*3600
                 db.execute('INSERT INTO employee_sessions(token_hash,user_id,expires,csrf) VALUES(?,?,?,?)', (digest,user['id'],expires,csrf))
                 user.update(token_hash=digest, csrf=csrf, expires=expires, project_id=None, quote_kind='original', parent_order_id=None)
-            self.cookie_out=f'workplace_complete_session={raw}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800'
+            self.cookie_out=runtime_config.session_cookie(raw)
             return user
         digest=hashlib.sha256(token.value.encode()).hexdigest()
         with database.connect() as db:
             user=core.row(db,"SELECT e.*,s.token_hash,s.csrf,s.project_id,s.quote_kind,s.parent_order_id,s.expires FROM employee_sessions s JOIN employees e ON e.id=s.user_id WHERE s.token_hash=? AND e.status='active' AND s.expires>?",(digest,time.time()))
-            if not user and (ROOT/'data/local-admin.json').exists():
+            if not user and not runtime_config.public_origin() and (ROOT/'data/local-admin.json').exists():
                 del self.headers['Cookie']
                 return self.session()
             if user and user['project_id'] and not access.visible_project(db,user,user['project_id']):
@@ -85,7 +86,7 @@ class Handler(BaseHTTPRequestHandler):
     def respond(self,status,body,mime='application/json; charset=utf-8'):
         raw=json.dumps(body,ensure_ascii=False).encode() if isinstance(body,(dict,list)) else body
         self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src http://127.0.0.1:8991 http://127.0.0.1:8992 http://127.0.0.1:8993; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src 'self' "+("" if runtime_config.public_origin() else "http://127.0.0.1:8991 http://127.0.0.1:8992 http://127.0.0.1:8993")+"; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
         if getattr(self,'attachment_name',None):
             from urllib.parse import quote
             self.send_header('Content-Disposition',"attachment; filename*=UTF-8''"+quote(self.attachment_name))
@@ -110,14 +111,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.bridge():raise core.Problem('来源无效',403)
                 return self.respond(200,{'results':database.d1_batch(p.get('statements'))})
             origin=self.headers.get('Origin')
-            if origin and origin not in (f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'):raise core.Problem('不允许跨站提交',403)
+            if origin and origin not in runtime_config.allowed_origins(PORT):raise core.Problem('不允许跨站提交',403)
             if path in ('/api/auth/setup','/api/auth/login'):return self.authenticate(path,p)
             user=self.session()
             if not user:raise core.Problem('请先登录统一工作平台',401)
             if not self.bridge() and not hmac.compare_digest(self.headers.get('X-Yifun-Token',''),user['csrf']):raise core.Problem('会话已失效，请刷新后重试',403)
             if path=='/api/auth/logout':
                 with database.connect() as db:db.execute('DELETE FROM employee_sessions WHERE token_hash=?',(user['token_hash'],))
-                self.cookie_out='workplace_complete_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0';return self.respond(200,{'ok':True})
+                self.cookie_out=runtime_config.session_cookie('', 0);return self.respond(200,{'ok':True})
             if path=='/api/context':
                 with database.connect() as db:
                     project=access.require(db,user,'projects',p.get('project_id')) if p.get('project_id') else None
@@ -196,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
             with database.connect() as db:
                 setup=db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]==0
                 department_centers=centers.available(db,user) if user else []
-            return self.respond(200,{'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
+            return self.respond(200,{'module_urls':runtime_config.module_urls(),'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
         if not user:raise core.Problem('请先登录统一工作平台',401)
         if path=='/api/connections':
             with database.connect() as db:
@@ -294,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             token=secrets.token_urlsafe(32);csrf=secrets.token_urlsafe(32)
             db.execute('DELETE FROM employee_sessions WHERE expires<?',(stamp,))
             db.execute('INSERT INTO employee_sessions(token_hash,user_id,expires,csrf) VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user['id'],stamp+8*3600,csrf))
-        self.cookie_out=f'workplace_complete_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800'
+        self.cookie_out=runtime_config.session_cookie(token)
         self.respond(200,{'ok':True,'user':public(user),'csrf':csrf})
     do_GET=dispatch
     do_POST=dispatch
