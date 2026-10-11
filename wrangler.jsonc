@@ -7,6 +7,7 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
+  "preview_urls": false,
   "build": {
     "command": "python3 prepare_source.py"
   },
@@ -23,8 +24,8 @@
     "PUBLIC_ORIGIN": "https://yifunlife-workplace.markfang458.workers.dev",
     "OWNER_EMAIL": "markfang458@hotmail.com",
     "VIEWER_EMAILS": "yifunlife@hotmail.com",
-    "ACCESS_ISSUER": "",
-    "ACCESS_AUD": ""
+    "ACCESS_ISSUER": "https://autumn-fog-20b6.cloudflareaccess.com",
+    "ACCESS_AUD": "b053d2f2f4526e44ae06a6bf56035d67de35637243aec8ceae2f87a87afa1be3"
   },
   "durable_objects": {
     "bindings": [
