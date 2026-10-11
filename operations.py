@@ -1,3 +1,4 @@
+import object_storage
 """Project-linked operational pages. All writes use the existing database transaction."""
 import base64
 import hashlib
@@ -331,11 +332,15 @@ def attach(db,user,p):
     if not 0<len(content)<=5*1024*1024:raise c.Problem('每个附件须小于 5 MB')
     mime=p.get('mime','application/octet-stream')
     if mime not in ('image/png','image/jpeg','image/webp','application/pdf','application/octet-stream','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.wordprocessingml.document'):raise c.Problem('请上传照片、PDF 或 Office 文件')
-    key=c.uid();db.execute('INSERT INTO operation_files VALUES(?,?,?,?,?,?,?,?)',(key,page,r['id'],c.text(p.get('file_name'),'文件名')[:200],mime,content,user['id'],c.now()))
+    key=c.uid();object_key=f'operations/{page}/{key}'
+    object_storage.put(object_key,content,mime)
+    db.execute('INSERT INTO operation_files(id,entity,entity_id,file_name,mime,content,created_by,created_at,object_key) VALUES(?,?,?,?,?,?,?,?,?)',(key,page,r['id'],c.text(p.get('file_name'),'文件名')[:200],mime,b'',user['id'],c.now(),object_key))
     c.audit(db,user,page,r['id'],'追加附件',{'attachment_id':key});return {'id':key}
 
 def file(db,user,key):
-    r=c.need(db,'operation_files',key);get_record(db,user,r['entity'],r['entity_id']);return r
+    r=c.need(db,'operation_files',key);get_record(db,user,r['entity'],r['entity_id'])
+    r['content']=object_storage.get(r['object_key']) if r.get('object_key') else r['content']
+    return r
 
 def imports(db,user,action,p):
     c.permit(user,'admin')
