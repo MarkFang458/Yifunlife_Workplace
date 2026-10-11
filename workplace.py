@@ -11,6 +11,7 @@ import ceo_dashboard
 import operations
 import centers
 import connections
+import account_reporting
 ROOT=database.ROOT
 PORT=int(os.environ.get('YIFUN_PORT','8975'))
 BRIDGE_PATH=database.DATA_ROOT/'secrets/bridge.key'
@@ -18,6 +19,7 @@ ROLES={'admin':['quote','procurement','aftersales'],'ceo':['quote','procurement'
 
 def init():
     database.init()
+    with database.connect() as db:account_reporting.init(db)
     BRIDGE_PATH.parent.mkdir(parents=True,exist_ok=True)
     if not BRIDGE_PATH.exists():
         BRIDGE_PATH.write_text(secrets.token_urlsafe(48));BRIDGE_PATH.chmod(0o600)
