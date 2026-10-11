@@ -17,10 +17,13 @@ def request(key, method='GET', body=None, mime='application/octet-stream'):
     key_path(key)
     endpoint = os.environ.get('YIFUN_OBJECT_ENDPOINT', '').rstrip('/')
     token = os.environ.get('YIFUN_OBJECT_TOKEN', '')
-    if not endpoint or not token or urlparse(endpoint).scheme != 'https':
+    private_binding = os.environ.get('YIFUN_CONTAINER_MODE') == '1' and endpoint == 'http://objects.yifun.internal'
+    if not private_binding and (not endpoint or not token or urlparse(endpoint).scheme != 'https'):
         raise RuntimeError('Private HTTPS object endpoint and token are required')
+    headers = {'Content-Type': mime}
+    if not private_binding: headers['Authorization'] = 'Bearer '+token
     req = Request(endpoint + '/objects/' + quote(key, safe='/'), data=body, method=method,
-                  headers={'Authorization': 'Bearer '+token, 'Content-Type': mime})
+                  headers=headers)
     with urlopen(req, timeout=30) as response:
         return response.read()
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib, tarfile
 ROOT = Path(__file__).resolve().parent
 archive = ROOT/'workflow-source.tar.gz'
-EXPECTED = '0c6b4573c69f275897f1bd6df9cf913763ffc031ecaeaccfd17416d033984b8e'
+EXPECTED = 'ec6ab10a2d3136726e591e16861609a355b457d7fd77c84d21b7207800950e53'
 if hashlib.sha256(archive.read_bytes()).hexdigest() != EXPECTED:
     raise SystemExit('Source archive checksum mismatch')
 with tarfile.open(archive) as tar:

@@ -13,6 +13,12 @@ if 'YIFUN_DB' not in os.environ and 'YIFUN_DATA_ROOT' not in os.environ and (ROO
 
 
 def connect():
+    backend = os.environ.get('YIFUN_DATABASE_BACKEND', 'local')
+    if backend == 'cloudflare':
+        from cloud_database import Connection
+        return Connection()
+    if backend != 'local':
+        raise RuntimeError('Unsupported YIFUN_DATABASE_BACKEND')
     db = sqlite3.connect(DB_PATH, timeout=20)
     db.row_factory = sqlite3.Row
     db.execute('PRAGMA foreign_keys=ON')
