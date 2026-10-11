@@ -81,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             if not user and not runtime_config.public_origin() and (ROOT/'data/local-admin.json').exists():
                 del self.headers['Cookie']
                 return self.session()
+            if user and runtime_config.container_mode() and user['email'].lower() not in runtime_config.allowed_emails():return None
             if user and runtime_config.container_mode() and self.headers.get('X-Yifun-Verified-Email') and user['email'].lower()!=runtime_config.verified_email(self.headers):return None
             if user and user['project_id'] and not access.visible_project(db,user,user['project_id']):
                 user.update(project_id=None,quote_kind='original',parent_order_id=None)
@@ -202,7 +203,9 @@ class Handler(BaseHTTPRequestHandler):
             with database.connect() as db:
                 setup=db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]==0
                 identity=runtime_config.verified_email(self.headers)
-                if runtime_config.container_mode():
+                if runtime_config.password_login():
+                    setup=False
+                elif runtime_config.container_mode():
                     if not identity:raise core.Problem('请通过站点登录入口访问',403)
                     setup=not db.execute('SELECT 1 FROM employees WHERE email=?',(identity,)).fetchone()
                     if identity!=runtime_config.owner_email() and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('管理员尚未初始化站点账号',409)
@@ -290,7 +293,10 @@ class Handler(BaseHTTPRequestHandler):
     def authenticate(self,path,p):
         email=core.text(p.get('email'),'邮箱').lower();secret=password(p.get('password'));stamp=time.time()
         identity=runtime_config.verified_email(self.headers)
-        if runtime_config.container_mode() and identity!=email:raise core.Problem('只能使用已验证的站点邮箱登录',403)
+        if runtime_config.password_login():
+            if email not in runtime_config.allowed_emails():raise core.Problem('邮箱或密码不正确',401)
+            if path.endswith('/setup'):raise core.Problem('请使用已经建立的账号登录；新账号由管理员建立',403)
+        elif runtime_config.container_mode() and identity!=email:raise core.Problem('只能使用已验证的站点邮箱登录',403)
         with database.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if path.endswith('/setup'):

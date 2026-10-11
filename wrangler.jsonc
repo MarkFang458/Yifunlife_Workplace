@@ -21,6 +21,7 @@
     }
   ],
   "vars": {
+    "AUTH_MODE": "password",
     "PUBLIC_ORIGIN": "https://yifunlife-workplace.markfang458.workers.dev",
     "OWNER_EMAIL": "markfang458@hotmail.com",
     "VIEWER_EMAILS": "yifunlife@hotmail.com",

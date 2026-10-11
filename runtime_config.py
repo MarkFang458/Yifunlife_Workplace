@@ -40,6 +40,10 @@ def container_mode():
     return os.environ.get('YIFUN_CONTAINER_MODE') == '1'
 
 
+def password_login():
+    return container_mode() and os.environ.get('YIFUN_AUTH_MODE') == 'password'
+
+
 def owner_email():
     return os.environ.get('YIFUN_OWNER_EMAIL', '').strip().lower()
 
