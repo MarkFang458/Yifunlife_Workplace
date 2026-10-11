@@ -13,6 +13,7 @@ import centers
 import connections
 import account_reporting
 import runtime_config
+import cloud_database
 ROOT=database.ROOT
 PORT=int(os.environ.get('YIFUN_PORT','8975'))
 BRIDGE_PATH=database.DATA_ROOT/'secrets/bridge.key'
@@ -80,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             if not user and not runtime_config.public_origin() and (ROOT/'data/local-admin.json').exists():
                 del self.headers['Cookie']
                 return self.session()
+            if user and runtime_config.container_mode() and self.headers.get('X-Yifun-Verified-Email') and user['email'].lower()!=runtime_config.verified_email(self.headers):return None
             if user and user['project_id'] and not access.visible_project(db,user,user['project_id']):
                 user.update(project_id=None,quote_kind='original',parent_order_id=None)
             return user
@@ -115,6 +117,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ('/api/auth/setup','/api/auth/login'):return self.authenticate(path,p)
             user=self.session()
             if not user:raise core.Problem('请先登录统一工作平台',401)
+            if runtime_config.read_only(user) and path not in ('/api/auth/logout','/api/context','/api/password'):raise core.Problem('共享账号仅可查看',403)
             if not self.bridge() and not hmac.compare_digest(self.headers.get('X-Yifun-Token',''),user['csrf']):raise core.Problem('会话已失效，请刷新后重试',403)
             if path=='/api/auth/logout':
                 with database.connect() as db:db.execute('DELETE FROM employee_sessions WHERE token_hash=?',(user['token_hash'],))
@@ -180,6 +183,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,core.mutate(user,path.rsplit('/',1)[1],p))
             raise core.Problem('接口不存在',404)
         except core.Problem as e:self.respond(e.status,{'error':e.message})
+        except cloud_database.ConcurrentUpdate as e:
+            self.respond(409,{'error':str(e)})
         except sqlite3.IntegrityError as e:
             message=str(e);self.respond(409,{'error':'编号或凭证已存在，请刷新核对' if 'UNIQUE' in message else message if any('\u4e00'<=c<='\u9fff' for c in message) else '关联资料或数量不符合规则，请核对后重试'})
         except (ValueError,TypeError,KeyError) as e:
@@ -196,8 +201,13 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/auth/session':
             with database.connect() as db:
                 setup=db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]==0
+                identity=runtime_config.verified_email(self.headers)
+                if runtime_config.container_mode():
+                    if not identity:raise core.Problem('请通过站点登录入口访问',403)
+                    setup=not db.execute('SELECT 1 FROM employees WHERE email=?',(identity,)).fetchone()
+                    if identity!=runtime_config.owner_email() and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('管理员尚未初始化站点账号',409)
                 department_centers=centers.available(db,user) if user else []
-            return self.respond(200,{'module_urls':runtime_config.module_urls(),'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
+            return self.respond(200,{'verified_email':identity,'cloud':runtime_config.container_mode(),'read_only':runtime_config.read_only(user) if user else runtime_config.container_mode() and identity!=runtime_config.owner_email(),'module_urls':runtime_config.module_urls(),'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
         if not user:raise core.Problem('请先登录统一工作平台',401)
         if path=='/api/connections':
             with database.connect() as db:
@@ -279,11 +289,24 @@ class Handler(BaseHTTPRequestHandler):
         raise core.Problem('页面不存在',404)
     def authenticate(self,path,p):
         email=core.text(p.get('email'),'邮箱').lower();secret=password(p.get('password'));stamp=time.time()
+        identity=runtime_config.verified_email(self.headers)
+        if runtime_config.container_mode() and identity!=email:raise core.Problem('只能使用已验证的站点邮箱登录',403)
         with database.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if path.endswith('/setup'):
-                if db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]:raise core.Problem('管理员已建立，请登录',409)
-                user=add_employee(db,p,True);core.audit(db,user,'employee',user['id'],'初始化管理员',{})
+                if runtime_config.container_mode():
+                    if db.execute('SELECT 1 FROM employees WHERE email=?',(email,)).fetchone():raise core.Problem('账号已建立，请登录',409)
+                    owner=email==runtime_config.owner_email()
+                    if not owner and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('管理员尚未初始化站点账号',409)
+                    user=add_employee(db,{**p,'role':'ceo'},owner)
+                else:
+                    if db.execute('SELECT COUNT(*) FROM employees').fetchone()[0]:raise core.Problem('管理员已建立，请登录',409)
+                    user=add_employee(db,p,True)
+                core.audit(db,user,'employee',user['id'],'初始化账号',{})
+                if runtime_config.container_mode():core.shadow_user(db,user)
+                if runtime_config.container_mode() and email==runtime_config.owner_email():
+                    import demo_data
+                    demo_data.seed(db,user)
             else:
                 attempts=core.row(db,'SELECT * FROM login_attempts WHERE email=?',(email,))
                 if attempts and attempts['expires']>stamp and attempts['count']>=8:raise core.Problem('尝试次数过多，请 15 分钟后重试',429)
@@ -305,5 +328,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(message)s');init()
     print(f'YIFUN Workplace V2：http://127.0.0.1:{PORT}',flush=True)
-    connections.start()
-    ThreadingHTTPServer(('127.0.0.1',PORT),Handler).serve_forever()
+    if not runtime_config.container_mode():connections.start()
+    ThreadingHTTPServer(('0.0.0.0' if runtime_config.container_mode() else '127.0.0.1',PORT),Handler).serve_forever()

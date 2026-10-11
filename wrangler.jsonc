@@ -1,0 +1,76 @@
+{
+  "name": "yifunlife-workplace",
+  "main": "cloudflare/container-worker.js",
+  "account_id": "8743ac0f29c597cb59160c6dcb7d15f3",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "build": {
+    "command": "python3 prepare_source.py"
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": [
+        "**/*.js.txt"
+      ],
+      "fallthrough": true
+    }
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://yifunlife-workplace.markfang458.workers.dev",
+    "OWNER_EMAIL": "markfang458@hotmail.com",
+    "VIEWER_EMAILS": "yifunlife@hotmail.com",
+    "ACCESS_ISSUER": "",
+    "ACCESS_AUD": ""
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORKPLACE_CONTAINER",
+        "class_name": "WorkplaceContainer"
+      },
+      {
+        "name": "BUSINESS_DATABASE",
+        "class_name": "BusinessDatabase"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "workplace-cloud-v1",
+      "new_sqlite_classes": [
+        "WorkplaceContainer",
+        "BusinessDatabase"
+      ]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "WorkplaceContainer",
+      "image": "./Dockerfile",
+      "max_instances": 1,
+      "instance_type": "standard-1"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CORE_FILES",
+      "bucket_name": "yifunlife-core-files"
+    },
+    {
+      "binding": "QUOTE_FILES",
+      "bucket_name": "yifunlife-quote-files"
+    },
+    {
+      "binding": "PROCUREMENT_FILES",
+      "bucket_name": "yifunlife-procurement-files"
+    },
+    {
+      "binding": "AFTERSALES_FILES",
+      "bucket_name": "yifunlife-aftersales-files"
+    }
+  ]
+}

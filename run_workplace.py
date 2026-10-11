@@ -23,6 +23,8 @@ def prepare(build=True):
   if not (folder/'node_modules').exists():
    raise RuntimeError(f'{name} 依赖不存在。请先按 README 恢复依赖。')
   variables='WORKSPACE_BRIDGE='+bridge+'\nWORKPLACE_URL=http://127.0.0.1:8975\n'
+  if workplace.runtime_config.container_mode():
+   variables+='PUBLIC_ORIGIN='+workplace.runtime_config.public_origin()+'\nYIFUN_R2_GATEWAY=http://files.yifun.internal\n'
   target=folder/'.dev.vars';target.write_text(variables);target.chmod(0o600)
   if build and name!='aftersales':
    command=['./node_modules/.bin/vinext','build'] if name=='quote' else ['./node_modules/.bin/vite','build']
@@ -52,7 +54,7 @@ def main():
    configs=list((folder/'dist').rglob('wrangler.json')) if name!='aftersales' else []
    config=configs[0] if configs else folder/'wrangler.jsonc'
    log=open(LOG_ROOT/f'{name}.log','a');logs.append(log)
-   command=[str(folder/'node_modules/.bin/wrangler'),'dev','--local','--ip','127.0.0.1','--port',str(port),'--inspector-port',str(port+100),'--config',str(config),'--persist-to',str(STORAGE_ROOT/f'{name}-storage')]
+   command=[str(folder/'node_modules/.bin/wrangler'),'dev','--local','--ip','0.0.0.0' if workplace.runtime_config.container_mode() else '127.0.0.1','--port',str(port),'--inspector-port',str(port+100),'--config',str(config),'--persist-to',str(STORAGE_ROOT/f'{name}-storage')]
    processes.append(subprocess.Popen(command,cwd=folder,stdout=log,stderr=log,env={**os.environ,'WRANGLER_SEND_METRICS':'false'}))
   print('正在启动三个中心，请稍候…',flush=True)
   for _ in range(120):

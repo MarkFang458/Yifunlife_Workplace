@@ -7,6 +7,8 @@ No business database is persisted on the application container's filesystem.
 import base64
 import json
 import os
+import secrets
+import hashlib
 import sqlite3
 import urllib.error
 import urllib.request
@@ -18,12 +20,16 @@ class ConcurrentUpdate(sqlite3.OperationalError):
 
 
 def encode(value):
+    if isinstance(value,int) and not isinstance(value,bool) and abs(value)>2**53-1:
+        return {'$integer':str(value)}
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {'$bytes': base64.b64encode(value).decode('ascii')}
     return value
 
 
 def decode(value):
+    if isinstance(value,dict) and set(value)=={'$integer'}:
+        return int(value['$integer'])
     return base64.b64decode(value['$bytes'], validate=True) if isinstance(value, dict) and set(value) == {'$bytes'} else value
 
 
@@ -94,6 +100,11 @@ class Connection(sqlite3.Connection):
                 super().execute(item['sql'])
         super().commit()
         super().execute('PRAGMA foreign_keys=ON')
+        self._baseline=self.fingerprint(self.export_snapshot())
+
+    @staticmethod
+    def fingerprint(snapshot):
+        return hashlib.sha256(json.dumps(snapshot,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
     def execute(self, sql, parameters=()):
         if self._failed:
@@ -127,16 +138,42 @@ class Connection(sqlite3.Connection):
         self.commit()
         return cursor or super().execute('SELECT 1 WHERE 0')
 
+    def export_snapshot(self):
+        if super().execute('PRAGMA foreign_key_check').fetchone():
+            raise sqlite3.IntegrityError('Cloud transaction has inconsistent relationships')
+        schema = [dict(row) for row in super().execute("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END,name")]
+        tables = []
+        names = [row['name'] for row in schema if row['type']=='table']
+        if super().execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").fetchone():
+            names.append('sqlite_sequence')
+        for name in names:
+            quoted='"'+name.replace('"','""')+'"'
+            cursor=super().execute('SELECT * FROM '+quoted)
+            tables.append({'name':name,'columns':[column[0] for column in cursor.description],
+                           'rows':[[encode(value) for value in row] for row in cursor]})
+        return {'schema':schema,'tables':tables}
+
     def commit(self):
         if self._pending:
+            snapshot=self.export_snapshot()
+            payload={'revision':self._revision,'commit_id':secrets.token_hex(16)}
+            if self.fingerprint(snapshot)==self._baseline:payload['unchanged']=True
+            else:payload['snapshot']=snapshot
             try:
-                result = request('/commit', {'revision': self._revision, 'statements': self._pending})
+                try:
+                    result=request('/commit',payload)
+                except ConcurrentUpdate:
+                    raise
+                except sqlite3.OperationalError:
+                    # Same receipt ID safely confirms a commit if its first response was lost.
+                    result=request('/commit',payload)
             except Exception:
                 super().rollback()
                 self._pending.clear()
-                self._failed = True
+                self._failed=True
                 raise
-            self._revision = result['revision']
+            self._revision=result['revision']
+            self._baseline=self.fingerprint(snapshot)
             self._pending.clear()
         return super().commit()
 

@@ -1,3 +1,5 @@
+Cloudflare 完整共享测试部署配置见 [CLOUDFLARE_DEPLOYMENT.md](CLOUDFLARE_DEPLOYMENT.md)。当前仍在准备与验证，尚未完成云端上线。
+
 克隆本仓库后，先运行 `python3 prepare_source.py` 恢复全部原生模块源码。云部署状态见 SOURCE_LAYOUT.md。
 
 # YIFUN Workplace · 完整页面版

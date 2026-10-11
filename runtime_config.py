@@ -34,3 +34,25 @@ def module_urls():
 def session_cookie(token, max_age=28800):
     secure = '; Secure' if public_origin() else ''
     return f'workplace_complete_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure}'
+
+
+def container_mode():
+    return os.environ.get('YIFUN_CONTAINER_MODE') == '1'
+
+
+def owner_email():
+    return os.environ.get('YIFUN_OWNER_EMAIL', '').strip().lower()
+
+
+def allowed_emails():
+    return {owner_email()} | {value.strip().lower() for value in os.environ.get('YIFUN_VIEWER_EMAILS', '').split(',') if value.strip()}
+
+
+def verified_email(headers):
+    if not container_mode(): return None
+    value = headers.get('X-Yifun-Verified-Email', '').strip().lower()
+    return value if value and value in allowed_emails() else None
+
+
+def read_only(user):
+    return container_mode() and user['email'].lower() != owner_email()
