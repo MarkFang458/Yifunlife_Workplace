@@ -115,6 +115,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,{'results':database.d1_batch(p.get('statements'))})
             origin=self.headers.get('Origin')
             if origin and origin not in runtime_config.allowed_origins(PORT):raise core.Problem('不允许跨站提交',403)
+            if path=='/api/auth/recover':return self.recover_account(p)
             if path in ('/api/auth/setup','/api/auth/login'):return self.authenticate(path,p)
             user=self.session()
             if not user:raise core.Problem('请先登录统一工作平台',401)
@@ -290,6 +291,31 @@ class Handler(BaseHTTPRequestHandler):
             with database.connect() as db:result=core.view(db,user,path.rsplit('/',1)[1],project)
             return self.respond(200,result)
         raise core.Problem('页面不存在',404)
+    def recover_account(self,p):
+        identity=runtime_config.verified_email(self.headers)
+        if not runtime_config.container_mode() or not identity:raise core.Problem('请先验证账号邮箱',403)
+        secret=password(p.get('password'))
+        if secret!=p.get('confirm'):raise core.Problem('两次密码输入不一致')
+        with database.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            user=core.row(db,'SELECT * FROM employees WHERE email=?',(identity,))
+            if user:
+                if user['status']!='active':raise core.Problem('账号已停用，请联系管理员',403)
+                salt=secrets.token_hex(16)
+                db.execute('UPDATE employees SET password_hash=?,salt=? WHERE id=?',(password_hash(secret,salt),salt,user['id']))
+                db.execute('DELETE FROM employee_sessions WHERE user_id=?',(user['id'],))
+                db.execute('DELETE FROM login_attempts WHERE email=?',(identity,))
+            else:
+                owner=identity==runtime_config.owner_email()
+                if not owner and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('请先恢复管理员账号',409)
+                user=add_employee(db,{'email':identity,'name':core.text(p.get('name'),'姓名'),'password':secret,'role':'ceo'},owner)
+                core.shadow_user(db,user)
+                if owner:
+                    import demo_data
+                    demo_data.seed(db,user)
+            core.audit(db,user,'employee',user['id'],'邮箱验证后设置账号密码',{})
+        return self.respond(200,{'ok':True})
+
     def authenticate(self,path,p):
         email=core.text(p.get('email'),'邮箱').lower();secret=password(p.get('password'));stamp=time.time()
         identity=runtime_config.verified_email(self.headers)

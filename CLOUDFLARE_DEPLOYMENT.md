@@ -46,3 +46,7 @@ Python 主服务和原报价、采购、售后模块全部保留。根目录源�
 - `wrangler deploy --dry-run --containers-rollout=none --outdir /tmp/yifun-cloud-worker-check`，然后 `node scripts/test_cloud_gateway.mjs`：编译部署网关，验证 Access 签名、邮箱名单、三个模块路由和私有 R2 文件读写。
 
 Cloudflare 官方存储限制：https://developers.cloudflare.com/durable-objects/platform/limits/
+
+## 账号恢复
+
+正常访问直接使用系统账号密码。只有 `/account-recovery` 路径使用 Cloudflare Access 邮箱身份验证，限已授权的管理员和查看邮箱，会话 15 分钟。网关验证恢复应用 audience，服务器只设置该已验证邮箱本人的密码，并清除旧登录会话及失败计数；已停用账号不能自行恢复。允许查看的邮箱尚无账号时可通过该入口建立只读账号，管理员缺失时只能由负责人邮箱先恢复。用户本人输入并保存新密码，代理不生成密码、不接收密码。
