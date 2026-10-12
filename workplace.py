@@ -25,6 +25,8 @@ def init():
         account_reporting.init(db)
         db.execute('CREATE TABLE IF NOT EXISTS account_recovery_requests(email TEXT PRIMARY KEY,requested_at REAL NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS account_recovery_links(token_hash TEXT PRIMARY KEY,email TEXT NOT NULL,expires REAL NOT NULL,created_by TEXT NOT NULL)')
+        import test_accounts
+        test_accounts.bootstrap(db)
     BRIDGE_PATH.parent.mkdir(parents=True,exist_ok=True)
     if not BRIDGE_PATH.exists():
         BRIDGE_PATH.write_text(secrets.token_urlsafe(48));BRIDGE_PATH.chmod(0o600)
@@ -231,7 +233,12 @@ class Handler(BaseHTTPRequestHandler):
                     setup=not db.execute('SELECT 1 FROM employees WHERE email=?',(identity,)).fetchone()
                     if identity!=runtime_config.owner_email() and not db.execute("SELECT 1 FROM employees WHERE email=? AND role='admin' AND status='active'",(runtime_config.owner_email(),)).fetchone():raise core.Problem('管理员尚未初始化站点账号',409)
                 department_centers=centers.available(db,user) if user else []
-            return self.respond(200,{'verified_email':identity,'cloud':runtime_config.container_mode(),'read_only':runtime_config.read_only(user) if user else runtime_config.container_mode() and identity!=runtime_config.owner_email(),'module_urls':runtime_config.module_urls(),'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
+                test_accounts_ready=False
+                if runtime_config.container_mode() and os.environ.get("YIFUN_DEMO_MODE")=="1":
+                    import test_accounts
+                    exists=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='demo_credential_migrations'").fetchone()
+                    test_accounts_ready=bool(exists and db.execute("SELECT 1 FROM demo_credential_migrations WHERE name=?",(test_accounts.MARKER,)).fetchone())
+            return self.respond(200,{'test_accounts_ready':test_accounts_ready,'verified_email':identity,'cloud':runtime_config.container_mode(),'read_only':runtime_config.read_only(user) if user else runtime_config.container_mode() and identity!=runtime_config.owner_email(),'module_urls':runtime_config.module_urls(),'authenticated':bool(user),'needsSetup':setup,'user':public(user) if user else None,'csrf':user['csrf'] if user else None,'project_id':user['project_id'] if user else None,'modules':ROLES.get(user['role'],[]) if user else [],'centers':department_centers})
         if not user:raise core.Problem('请先登录统一工作平台',401)
         if path=='/api/connections':
             with database.connect() as db:
