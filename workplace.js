@@ -24,10 +24,30 @@ const products=()=>state.products.map(p=>({id:p.id,label:`${p.sku} · ${p.name}`
 const lines=()=>state.baselines.flatMap(b=>b.lines.map(l=>({...l,label:`${b.number} · ${l.sku} · ${l.name}`})));
 const projectName=id=>state.projects.find(p=>p.id===id)?.name||id;
 const baselineName=id=>state.baselines.find(b=>b.id===id)?.number||id;
-async function api(path,p){const r=await fetch(path,{method:p===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(session?.csrf?{'X-Yifun-Token':session.csrf}:{})},body:p===undefined?undefined:JSON.stringify(p)});const result=await r.json();if(!r.ok){if(r.status===401){await start();}throw new Error(result.error||'操作失败，请重试');}return result;}
+const readCache=new YifunReadCache();
+const nativeFrames=new Map();
+function clearPageCache(){readCache.clear();}
+function pageLoading(el,title,description=''){
+ el.innerHTML=head(title,description)+`<div class="page-skeleton" role="status" aria-label="正在加载数据"><div></div><div></div><div></div><span class="muted">加载数据中…</span></div>`;
+}
+async function api(path,p){
+ const write=p!==undefined;
+ if(write)clearPageCache();
+ const load=async()=>{
+  const r=await fetch(path,{method:write?'POST':'GET',headers:{'Content-Type':'application/json',...(session?.csrf?{'X-Yifun-Token':session.csrf}:{})},body:write?JSON.stringify(p):undefined});
+  const result=await r.json();
+  if(!r.ok){if(r.status===401){clearPageCache();await start();}throw new Error(result.error||'操作失败，请重试');}
+  if(write)clearPageCache();return result;
+ };
+ const cacheable=!write&&/^\/api\/(centers\/(dashboard|records)|ops\/view|dashboard(?:\?|$)|view\/overview|connections(?:\?|$))/.test(path);
+ if(!cacheable)return load();
+ const generation=renderGeneration,currentView=view,scope=session?.user?.id||'anonymous';
+ return readCache.read(scope+':'+path,load,{onUpdate:()=>{if(generation===renderGeneration&&view===currentView&&!$('#dialog').open&&!document.activeElement?.matches('input,select,textarea,[contenteditable]'))render().catch(error=>notify(error.message));},onError:()=>{if(generation===renderGeneration)notify('后台更新失败，当前显示上次数据，请点击刷新重试。');}});
+}
 const act=(name,p)=>api(`/api/action/${name}`,p);
 function notify(message){$('#notice').textContent=message;$('#notice').classList.add('show');clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('#notice').classList.remove('show'),6500);}
 async function start(){
+ clearPageCache();nativeFrames.clear();
  state=null;dashboardData=null;dashboardList='';moduleLink='';view='tasks';routeRecord='';
  if($('#dialog').open)closeModal();session=await api('/api/auth/session');if(!session.authenticated){login();return;}
  project=session.project_id||'';if(can('supplier'))view='procurement';
@@ -71,10 +91,15 @@ async function render(){workplacePageUrl();const current=++renderGeneration;cons
  const sections=$('#center-sections'),group=section?.groups?.find(g=>g.pages.some(([page])=>page===view));
  sections.hidden=!section||section.pages.length<2;sections.classList.toggle('center-sections-grouped',Boolean(group));
  sections.innerHTML=sections.hidden?'':group?`<nav class="center-group-tabs" aria-label="${esc(section.name)}分区">${section.groups.map(g=>`<button data-view="${g.pages[0][0]}" data-center-group="${g.pages[0][0]}">${esc(g.name)}</button>`).join('')}</nav><nav class="center-page-tabs" aria-label="${esc(group.name)}页面">${group.pages.map(([id,name])=>`<button data-view="${id}">${esc(name)}</button>`).join('')}</nav>`:`${section.id==='marketing'?'':`<strong>${esc(section.name)}</strong>`}<nav aria-label="${esc(section.name)}页面">${section.pages.map(([id,name])=>`<button data-view="${id}">${esc(name)}</button>`).join('')}</nav>`;
- if(center&&!wasCenter)$('#center-back').focus();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-current',(b.dataset.center?b.dataset.center===section?.id:b.dataset.centerGroup?b.dataset.centerGroup===group?.pages[0][0]:b.dataset.view===view)?'page':'false'));const el=$('#content');el.className='';if(wasCenter&&!center)el.focus();
+ if(center&&!wasCenter)$('#center-back').focus();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-current',(b.dataset.center?b.dataset.center===section?.id:b.dataset.centerGroup?b.dataset.centerGroup===group?.pages[0][0]:b.dataset.view===view)?'page':'false'));const el=$('#content');el.className='';el.hidden=false;nativeFrames.forEach(frame=>frame.style.display='none');if(wasCenter&&!center)el.focus();
  if(view==='quote-entry'){el.style.padding='';el.innerHTML=quoteEntry();return;}
  if(view==='quote'&&state?.online_quote){el.style.padding='';await renderOnlineQuote(el,current);return;}
- if(modules[view]){el.className='module-area';el.innerHTML=`<iframe title="${modules[view].name}" src="${esc(session?.module_urls?.[view]||`http://127.0.0.1:${modules[view].port}/`)}?workspace=1${esc(moduleLink)}"></iframe>`;el.style.padding='0';return;}
+ if(modules[view]){
+  const src=(session?.module_urls?.[view]||`http://127.0.0.1:${modules[view].port}/`)+`?workspace=1${moduleLink}`;
+  const key=JSON.stringify([session.user.id,project,src]);let frame=nativeFrames.get(view);
+  if(!frame||frame.dataset.context!==key){frame?.remove();frame=document.createElement('iframe');frame.title=modules[view].name;frame.src=src;frame.dataset.context=key;frame.className='retained-module-frame';el.after(frame);nativeFrames.set(view,frame);}
+  el.hidden=true;frame.style.display='block';return;
+ }
  el.style.padding='';
  if(view==='center-marketing-spend'||view==='center-design-records'){await renderCenterRecords(el,view,current);return;}
  if(view==='center-marketing-leads'){await renderOperations(el,'leads',current);return;}
@@ -117,7 +142,7 @@ async function action(name,id){
  if(await centerAction(name,id))return;
  if(await operationsAction(name,id))return;
  if(await dashboardAction(name,id))return;
- if(name==='refresh'){await refresh();notify('资料已刷新');return;}
+ if(name==='refresh'){clearPageCache();nativeFrames.forEach(frame=>frame.remove());nativeFrames.clear();await refresh();notify('资料已刷新');return;}
  if(name==='logout'){await api('/api/auth/logout',{});await start();return;}
  if(name.startsWith('project-')){moduleLink='';routeRecord='';view=name.slice(8);await chooseProject(id);return;}
  if(name==='customer')return modal('新建客户',input('name','客户名称')+input('code','客户编号（选填）','text','',false,'placeholder="留空自动生成"')+input('contact','联系人','text','',false)+input('phone','电话','text','',false)+input('email','邮箱','email','',false),p=>act('customers',p));

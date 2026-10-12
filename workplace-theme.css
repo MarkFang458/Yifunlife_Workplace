@@ -298,3 +298,12 @@ html[data-workplace-center="workplace"] #content>.panel{margin-bottom:16px}
 #content .records-caption{padding:7px 12px;font-size:11px}
 #content .records-expand>summary{padding:9px 12px;font-size:12px}
 #content .ops-toolbar{gap:10px;padding:12px 14px;border-radius:12px}
+
+/* Compact first-load placeholders; previously loaded reads reuse tab-local data. */
+.page-skeleton{display:grid;gap:10px;padding:18px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:16px}
+.page-skeleton>div{height:32px;border-radius:5px;background:linear-gradient(90deg,#edf1f7,#f7f9fc,#edf1f7);background-size:200% 100%;animation:page-load 1.4s ease-in-out infinite}
+.page-skeleton>div:nth-child(2){width:85%}.page-skeleton>div:nth-child(3){width:65%}
+.retained-module-frame{display:block;border:0;width:100%;height:calc(100vh - 180px);min-height:540px;background:#fff}
+@keyframes page-load{to{background-position:-200% 0}}
+@media(prefers-reduced-motion:reduce){.page-skeleton>div{animation:none}}
+@media(max-width:760px){.retained-module-frame{height:calc(100dvh - 150px);min-height:420px}}

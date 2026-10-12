@@ -33,7 +33,7 @@ function sectionForView(page){
 }
 async function renderOperations(el,page,generation){
  const changed=opsPage!==page;opsPage=page;if(changed){opsQuery='';opsStatus='';}
- el.innerHTML=head(OPS_LABELS[page],OPS_DESCRIPTIONS[page])+`<div class="ops-loading" role="status">正在读取关联资料…</div>`;
+ pageLoading(el,OPS_LABELS[page],OPS_DESCRIPTIONS[page]);
  try{
   const [lookup,result]=await Promise.all([api('/api/ops/view?page=lookups'),page==='migration'?Promise.resolve({items:[],can_write:can('admin')}):api('/api/ops/view?page='+opsKey(page)+(project&&!['leads','opportunities'].includes(page)?'&project='+encodeURIComponent(project):''))]);
   if(generation!==renderGeneration)return;opsLookups=lookup;opsData=result;

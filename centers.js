@@ -19,7 +19,7 @@ function centerPages(id){
 }
 function centerPeriod(id){const today=opsDate();return centerFilters[id]||{from:today.slice(0,8)+'01',to:today,currency:'CNY'};}
 async function renderCenter(el,id,generation){
- centerPage=id;centerData=null;el.innerHTML=head(CENTER_NAMES[id],CENTER_DESCRIPTIONS[id])+`<p class="ops-loading" role="status">正在汇总本中心业务记录…</p>`;
+ centerPage=id;centerData=null;pageLoading(el,CENTER_NAMES[id],CENTER_DESCRIPTIONS[id]);
  try{
   const period=centerPeriod(id),query=new URLSearchParams({center:id,...period,...(project&&id!=='marketing'?{project}:{})});
   const data=await api('/api/centers/dashboard?'+query);if(generation!==renderGeneration)return;centerData=data;if(id==='marketing'){renderTestAccountBoard(el,data);return;}
@@ -46,7 +46,7 @@ function salesBoardSections(data){
 }
 async function renderCenterRecords(el,page,generation){
  const kind=page==='center-marketing-spend'?'spend':'design';if(centerPage!==page){centerQuery='';centerStatus='';}centerPage=page;centerRecords=null;
- const title=kind==='spend'?'平台投入登记':'设计任务与工程交接';el.innerHTML=head(title,'正在读取业务记录…');
+ const title=kind==='spend'?'平台投入登记':'设计任务与工程交接';pageLoading(el,title);
  try{const data=await api('/api/centers/records?'+new URLSearchParams({page:kind,...(project&&kind!=='spend'?{project}:{})}));if(generation!==renderGeneration)return;centerRecords={...data,kind};
   const states=kind==='spend'?{active:'有效记录',void:'已作废'}:DESIGN_STATES;
   el.innerHTML=head(title,kind==='spend'?'每笔投入只登记一次。修改保留历史，作废须填写原因；各币种分开汇总。':'销售提交需求，设计安排人员和日期，成果经客户确认后交给工程接收。',data.can_write?button('center-new',kind==='spend'?'登记投入':'提交设计需求','','secondary'):'')+`<div class="ops-toolbar"><label>搜索<input id="center-search" type="search" value="${esc(centerQuery)}" placeholder="名称、项目或负责人"></label><label>状态<select id="center-status"><option value="">全部状态</option>${Object.entries(states).map(([key,label])=>`<option value="${key}"${key===centerStatus?' selected':''}>${label}</option>`).join('')}</select></label><span id="center-count" class="ops-result-count"></span></div><div id="center-records"></div>`;drawCenterRecords();

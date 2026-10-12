@@ -16,7 +16,7 @@ function dashboardUrl(){
   history.replaceState(null,'','/?'+p.toString());
 }
 async function companyDashboard(el,generation){
-  el.innerHTML=head('CEO 总看板','正在汇总项目、交付与资金资料。')+empty('正在汇总共用数据…');
+  pageLoading(el,'CEO 总看板','项目全生命周期经营总况');
   const params=new URLSearchParams(dashboardPeriod);if(dashboardProject)params.set('project',dashboardProject);
   const result=await api('/api/dashboard?'+params);
   if(generation!==renderGeneration)return;
