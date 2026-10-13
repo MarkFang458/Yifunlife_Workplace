@@ -61,6 +61,7 @@ def report(db, user, projects, orders, quotes, start, end, today):
         output.append({'id':pid,'name':p['name'],'market':market(p),'sales':person(owner[0]) if owner else p['owner'] or '待分配',
             'design_owner':'、'.join(dict.fromkeys(person(d['owner_id']) for d in design)) or '待分配',
             'design_status':'设计中' if active_design else '已确认' if design else '未建任务',
+            'design_due':min((d['due_date'] for d in design if d['due_date'] and d['status'] not in ('accepted','confirmed','handoff')),default=None),
             'engineering_owner':person(engineering[0]['released_by'] or engineering[0]['created_by']) if engineering else '待分配',
             'engineering_status':'已下达' if engineering and engineering[0]['status']=='released' else '草稿' if engineering else '待交接',
             'production':'生产中' if production else '生产完成' if lines and all(i['production_completed'] for i in lines) else '待生产' if lines else '未下采购单',
