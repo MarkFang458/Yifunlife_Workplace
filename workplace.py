@@ -216,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             logging.exception('Request failed');self.respond(500,{'error':'未能完成操作，资料未确认保存。请查看本地运行日志后重试'})
     def get(self,path):
-        assets={'/read-cache.js':'read-cache.js','/password-recovery':'password-recovery.html','/password-recovery.js':'password-recovery.js','/dashboard.css':'dashboard.css','/operations.js':'operations.js','/operations.css':'operations.css','/':'workplace.html','/workplace.js':'workplace.js','/dashboard.js':'dashboard.js','/workplace.css':'workplace.css','/workplace-theme.css':'workplace-theme.css','/workplace-logo.png':'workplace-logo.png','/workplace-favicon.svg':'workplace-favicon.svg','/workplace-favicon.png':'workplace-favicon.png'}
+        assets={'/sales-dashboard.css':'sales-dashboard.css','/sales-dashboard.js':'sales-dashboard.js','/read-cache.js':'read-cache.js','/password-recovery':'password-recovery.html','/password-recovery.js':'password-recovery.js','/dashboard.css':'dashboard.css','/operations.js':'operations.js','/operations.css':'operations.css','/':'workplace.html','/workplace.js':'workplace.js','/dashboard.js':'dashboard.js','/workplace.css':'workplace.css','/workplace-theme.css':'workplace-theme.css','/workplace-logo.png':'workplace-logo.png','/workplace-favicon.svg':'workplace-favicon.svg','/workplace-favicon.png':'workplace-favicon.png'}
         if path in assets:
             file=ROOT/assets[path];return self.respond(200,file.read_bytes(),mimetypes.guess_type(file)[0] or 'application/octet-stream')
         if path in ('/centers.js','/centers.css','/connections.js'):

@@ -15,7 +15,7 @@ SPECS = {
     'installation': ('work_tasks', ('engineering','installation'), ('project_id','title','owner_id','due_date','status','description','location','blocking','resolution','acceptance')),
     'issues': ('work_tasks', ('engineering','installation','purchasing','warehouse','aftersales','sales'), ('project_id','title','owner_id','due_date','status','description','location','blocking','resolution','acceptance')),
     'equipment': ('equipment_assets', ('installation','engineering','aftersales'), ('project_id','delivery_line_id','serial','name','location','warranty_start','warranty_end','notes')),
-    'leads': ('crm_leads', ('admin','ceo','sales'), ('name','company','contact','phone','source','owner_id','status','next_date','next_action','notes','customer_id','region','activity','validity_reason')),
+    'leads': ('crm_leads', ('admin','ceo','sales'), ('name','company','contact','phone','source','owner_id','status','next_date','next_action','notes','customer_id','region','activity','validity_reason','customer_grade')),
     'opportunities': ('crm_opportunities', ('sales',), ('lead_id','customer_id','project_id','name','owner_id','stage','expected_minor','currency','expected_date','next_action','notes')),
     'expenses': ('project_expenses', ('finance','ceo'), ('project_id','category','amount_minor','currency','record_date','reference','note')),
     'budgets': ('project_budgets', ('finance','ceo'), ('project_id','currency','amount_minor','note')),
@@ -152,7 +152,7 @@ def save(db,user,page,p):
     if page=='opportunities' and old:
         values['project_id']=p.get('project_id',old['project_id'])
         if old['project_id'] and values['project_id']!=old['project_id']:raise c.Problem('已关联报价的商机不能更换项目')
-    optional={'notes','description','location','resolution','acceptance','phone','note','project_id','customer_id','blocking','expected_minor','region','activity','validity_reason'}
+    optional={'notes','description','location','resolution','acceptance','phone','note','project_id','customer_id','blocking','expected_minor','region','activity','validity_reason','customer_grade'}
     for key in fields:
         if key not in optional and key not in ('amount_minor',):values[key]=c.text(values[key],key)
         if isinstance(values[key],str) and len(values[key])>10000:raise c.Problem('单个字段内容过长')
@@ -182,6 +182,9 @@ def save(db,user,page,p):
         if parent['project_id']!=values['project_id']:raise c.Problem('设备必须关联该项目的实际交付产品')
         if values['warranty_end']<values['warranty_start']:raise c.Problem('保修结束日期不能早于开始日期')
     if page=='leads':
+        values['customer_grade']=p.get('customer_grade',old.get('customer_grade','') if old else '')
+        if values['customer_grade'] not in ('','A','B','C'):raise c.Problem('请选择 A、B、C 客户标签')
+        if values['customer_grade']!=(old.get('customer_grade','') if old else '') and user['role'] not in MANAGERS and not marketing:raise c.Problem('客户标签由运营部维护',403)
         owner=c.need(db,'employees',values['owner_id'])
         if owner['status']!='active' or owner['role']=='supplier':raise c.Problem('请选择有效内部负责人')
         if marketing and user['role'] not in MANAGERS and owner['id']!=user['id'] and owner['role']!='sales':raise c.Problem('线索请交给销售或自己跟进')
@@ -201,6 +204,8 @@ def save(db,user,page,p):
     else:
         values.update(id=key,created_by=user['id'],created_at=stamp,updated_at=stamp)
         db.execute('INSERT INTO '+table+'('+','.join(values)+') VALUES('+','.join('?' for _ in values)+')',tuple(values.values()))
+    if page=='leads' and (marketing or user['role'] in MANAGERS) and (not old or old['owner_id']!=values['owner_id']) and owner['role']=='sales':
+        db.execute('INSERT INTO marketing_lead_allocations VALUES(?,?,?,?,?)',(c.uid(),key,owner['id'],user['id'],stamp))
     c.audit(db,user,page,key,'更新记录' if old else '新建记录',{'project_id':values.get('project_id')})
     if page in ('leads','opportunities'):centers.event(db,user,page,key,'更新业务阶段' if old else '建立业务记录',old,values)
     return {'id':key}

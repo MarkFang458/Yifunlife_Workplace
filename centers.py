@@ -299,7 +299,9 @@ def dashboard(db,user,center,start=None,end=None,project=None,currency='CNY'):
         annual_orders=[o for o in orders if o['currency']==currency and local_day(o['created_at']) and annual_start<=local_day(o['created_at']).isoformat()<=end]
         metric('annual_booked','年度合同金额',sum(o['agreed_minor'] for o in annual_orders),'money',annual_start+' 至 '+end+' · 含增项 · '+currency)
         metric('signed_projects','本期签单项目',len({o['project_id'] for o in orders if in_period(o['created_at'])}),'个','项目去重，增项不重复计数')
-        sales={'funnel':funnel,'projects':sales_projects,'period_contract_count':sum(in_period(o['created_at']) for o in orders),'annual_contract_count':len(annual_orders)}
+        import sales_dashboard
+        sales_lifecycle=sales_dashboard.report(db,user,projects,orders,quotes,start,end,today)
+        sales={'lifecycle':sales_lifecycle,'funnel':funnel,'projects':sales_projects,'period_contract_count':sum(in_period(o['created_at']) for o in orders),'annual_contract_count':len(annual_orders)}
         notices.append('销售项目阶段沿用共用报价及正式订单：无有效报价归入设计中，已确认报价且未签单归入待签单；设计任务实际执行请查看设计中心。')
     elif center=='design':
         tasks=records(db,user,'design',project)['items'];active=[r for r in tasks if r['status'] not in ('accepted','cancelled')]
