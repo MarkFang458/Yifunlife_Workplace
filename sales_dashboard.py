@@ -7,7 +7,7 @@ from ceo_dashboard import local_day
 
 
 def report(db, user, projects, orders, quotes, start, end, today):
-    employees = {r['id']: dict(r) for r in db.execute('SELECT id,name,role,status FROM employees')}
+    employees = {r['id']: dict(r) for r in db.execute('SELECT id,name,email,role,status FROM employees')}
     rows = lambda table: [dict(r) for r in db.execute('SELECT * FROM '+table) if r['project_id'] in projects]
     designs, engineers, tasks, tickets = (rows(t) for t in ('design_tasks','engineering_orders','work_tasks','service_tickets'))
     countries = {}
@@ -16,8 +16,13 @@ def report(db, user, projects, orders, quotes, start, end, today):
             countries[r['project_id']] = json.loads(r['payload']).get('country','')
     def market(p):
         country = str(countries.get(p['id']) or p['location'] or '').strip().lower().replace(' ','')
-        if not country or country in ('待确认','unknown','未填写'): return 'unknown'
-        return 'domestic' if country in ('cn','chn','china','中国','中国大陆','prc','中华人民共和国','mainlandchina') else 'foreign'
+        if country in ('cn','chn','china','中国','中国大陆','prc','中华人民共和国','mainlandchina','国内','内贸'):return 'domestic'
+        if country in ('外贸','国外','us','usa','美国','canada','加拿大','澳大利亚','澳洲','australia','au','英国','uk','unitedkingdom','阿联酋','uae','unitedarabemirates','沙特','沙特阿拉伯','saudiarabia','新加坡','singapore','日本','japan','德国','germany','法国','france','印度','india'):return 'foreign'
+        if countries.get(p['id']) and country not in ('unknown','待确认','未填写','其他'):return 'foreign'
+        # The shared demo seed has explicit sample identities but a generic location.
+        if p['notes']=='共享测试项目' and country=='模拟项目地点':
+            return {'DEMO-PROJECT-1':'domestic','DEMO-PROJECT-2':'foreign','DEMO-PROJECT-3':'domestic'}.get(p['id'],'unknown')
+        return 'unknown'
     def totals(records):
         out = defaultdict(int)
         for r in records: out[r['currency']] += r['agreed_minor']
@@ -58,7 +63,24 @@ def report(db, user, projects, orders, quotes, start, end, today):
         if any(t['due_date']<today and t['status']!='accepted' for t in installations):alerts.append('安装待推进')
         owner=db.execute("SELECT employee_id FROM project_members WHERE project_id=? AND assignment_role='owner'",(pid,)).fetchone()
         history=customer_orders[p['customer_id']]
-        output.append({'id':pid,'name':p['name'],'market':market(p),'sales':person(owner[0]) if owner else p['owner'] or '待分配',
+        own_tickets=[t for t in tickets if t['project_id']==pid]
+        ticket_payloads=[json.loads(t['payload']) for t in own_tickets]
+        deliveries=[dict(d) for d in db.execute('SELECT * FROM deliveries WHERE project_id=?',(pid,))]
+        next_task=next(iter(sorted([t for t in tasks if t['project_id']==pid and t['status'] not in ('done','accepted','closed')],key=lambda t:t['due_date'])),None)
+        procurement_owner='、'.join(dict.fromkeys(b['purchaser_name'] for b in buying if b['purchaser_name'])) or '待分配'
+        warehouse_owner='、'.join(dict.fromkeys(person(d['actor_id']) for d in deliveries)) or '待分配'
+        after_owner='、'.join(dict.fromkeys(t.get('owner') for t in ticket_payloads if t.get('owner'))) or '待分配'
+        departments=[
+            {'name':'销售部','owner':person(owner[0]) if owner else p['owner'] or '待分配','status':'客户主联系人','note':'客户需求、成交范围与商务变更'},
+            {'name':'设计部','owner':'、'.join(dict.fromkeys(person(d['owner_id']) for d in design)) or '待分配','status':'设计中' if active_design else '已确认' if design else '未建任务','note':'方案版本、客户确认及承诺完成日期'},
+            {'name':'核算部','owner':next((e['name'] for e in employees.values() if e['email']==quote['created_by']),quote['created_by']) if quote else '待分配','status':'订单已确认' if signed else '已报价' if quote else '待报价','note':'报价版本、产品清单及增项'},
+            {'name':'工程部','owner':person(engineering[0]['released_by'] or engineering[0]['created_by']) if engineering else '待分配','status':'已下达' if engineering and engineering[0]['status']=='released' else '草稿' if engineering else '待交接','note':'执行规格、图纸与工程单版本'},
+            {'name':'采购部','owner':procurement_owner,'status':'生产中' if production else '采购跟进中' if buying else '待下单','note':'供应商、生产反馈及发货期限'},
+            {'name':'仓库部','owner':warehouse_owner,'status':'已登记交付' if deliveries else '待交付','note':'到货验收、库存与交付记录'},
+            {'name':'安装部','owner':'、'.join(dict.fromkeys(person(t['owner_id']) for t in installations)) or '待分配','status':'安装验收中' if installation else '已验收' if installations and all(t['status']=='accepted' for t in installations) else '待安装','note':'安装排期、现场问题及验收'},
+            {'name':'售后部','owner':after_owner,'status':str(len(own_tickets))+' 件工单' if own_tickets else '待交付建档','note':'设备档案、保修及服务记录'}]
+
+        output.append({'id':pid,'name':p['name'],'departments':departments,'next_task':{'title':next_task['title'],'owner':person(next_task['owner_id']),'due':next_task['due_date']} if next_task else None,'market':market(p),'sales':person(owner[0]) if owner else p['owner'] or '待分配',
             'design_owner':'、'.join(dict.fromkeys(person(d['owner_id']) for d in design)) or '待分配',
             'design_status':'设计中' if active_design else '已确认' if design else '未建任务',
             'design_due':min((d['due_date'] for d in design if d['due_date'] and d['status'] not in ('accepted','confirmed','handoff')),default=None),
