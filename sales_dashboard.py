@@ -70,16 +70,36 @@ def report(db, user, projects, orders, quotes, start, end, today):
         procurement_owner='、'.join(dict.fromkeys(b['purchaser_name'] for b in buying if b['purchaser_name'])) or '待分配'
         warehouse_owner='、'.join(dict.fromkeys(person(d['actor_id']) for d in deliveries)) or '待分配'
         after_owner='、'.join(dict.fromkeys(t.get('owner') for t in ticket_payloads if t.get('owner'))) or '待分配'
+        issues=[t for t in tasks if t['project_id']==pid and t['kind']=='issue']
+        open_issues=[t for t in issues if t['status']!='closed']
+        production_owner='、'.join(dict.fromkeys(i.get('production_completed_by') for i in lines if i.get('production_completed_by'))) or '待分配'
         departments=[
             {'name':'销售部','owner':person(owner[0]) if owner else p['owner'] or '待分配','status':'客户主联系人','note':'客户需求、成交范围与商务变更'},
             {'name':'设计部','owner':'、'.join(dict.fromkeys(person(d['owner_id']) for d in design)) or '待分配','status':'设计中' if active_design else '已确认' if design else '未建任务','note':'方案版本、客户确认及承诺完成日期'},
             {'name':'核算部','owner':next((e['name'] for e in employees.values() if e['email']==quote['created_by']),quote['created_by']) if quote else '待分配','status':'订单已确认' if signed else '已报价' if quote else '待报价','note':'报价版本、产品清单及增项'},
             {'name':'工程部','owner':person(engineering[0]['released_by'] or engineering[0]['created_by']) if engineering else '待分配','status':'已下达' if engineering and engineering[0]['status']=='released' else '草稿' if engineering else '待交接','note':'执行规格、图纸与工程单版本'},
             {'name':'采购部','owner':procurement_owner,'status':'生产中' if production else '采购跟进中' if buying else '待下单','note':'供应商、生产反馈及发货期限'},
+            {'name':'生产部','owner':production_owner,'status':'生产中' if production else '生产完成' if lines and all(i['production_completed'] for i in lines) else '待生产' if lines else '待下单','note':'产品生产、完工与生产反馈'},
             {'name':'仓库部','owner':warehouse_owner,'status':'已登记交付' if deliveries else '待交付','note':'到货验收、库存与交付记录'},
             {'name':'安装部','owner':'、'.join(dict.fromkeys(person(t['owner_id']) for t in installations)) or '待分配','status':'安装验收中' if installation else '已验收' if installations and all(t['status']=='accepted' for t in installations) else '待安装','note':'安装排期、现场问题及验收'},
-            {'name':'售后部','owner':after_owner,'status':str(len(own_tickets))+' 件工单' if own_tickets else '待交付建档','note':'设备档案、保修及服务记录'}]
+            {'name':'售后部','owner':after_owner,'status':str(len(own_tickets))+' 件工单' if own_tickets else '待交付建档','note':'设备档案、保修及服务记录'},
+            {'name':'问题反馈','owner':'、'.join(dict.fromkeys(person(t['owner_id']) for t in open_issues)) or ('—' if not issues else '已处理'),'status':str(len(open_issues))+' 项待处理' if open_issues else '全部已关闭' if issues else '暂无问题','note':'共 '+str(len(issues))+' 项 · 已关闭 '+str(len(issues)-len(open_issues))+' 项'+(' · '+ '；'.join(t['title'] for t in open_issues[:3]) if open_issues else '')}]
 
+        def last_day(records,field):
+            dates=[local_day(r.get(field)) for r in records if r.get(field)]
+            return max(dates).isoformat() if dates else None
+        design_done=bool(design) and all(d['status'] in ('confirmed','handoff','accepted') for d in design)
+        production_done=bool(lines) and all(i['production_completed'] for i in lines)
+        installation_done=bool(installations) and all(t['status']=='accepted' for t in installations)
+        date_fields={
+            '设计部':(min((d['due_date'] for d in design if d['due_date']),default=None),last_day(design,'completed_at') if design_done else None,design_done),
+            '工程部':(engineering[0]['required_date'] if engineering else None,last_day(engineering[:1],'released_at'),bool(engineering and engineering[0]['status']=='released')),
+            '生产部':(None,last_day(lines,'production_completed_at') if production_done else None,production_done),
+            '安装部':(max((t['due_date'] for t in installations),default=None),last_day(installations,'completed_at') if installation_done else None,installation_done),
+            '问题反馈':(min((t['due_date'] for t in open_issues),default=None),last_day(issues,'completed_at') if issues and not open_issues else None,bool(issues and not open_issues))}
+        for department in departments:
+            expected,actual,completed=date_fields.get(department['name'],(None,None,False))
+            department.update(expected_date=expected,actual_date=actual,completed=completed)
         output.append({'id':pid,'name':p['name'],'departments':departments,'next_task':{'title':next_task['title'],'owner':person(next_task['owner_id']),'due':next_task['due_date']} if next_task else None,'market':market(p),'sales':person(owner[0]) if owner else p['owner'] or '待分配',
             'design_owner':'、'.join(dict.fromkeys(person(d['owner_id']) for d in design)) or '待分配',
             'design_status':'设计中' if active_design else '已确认' if design else '未建任务',

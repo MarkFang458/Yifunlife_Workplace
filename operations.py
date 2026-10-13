@@ -199,6 +199,9 @@ def save(db,user,page,p):
     if values.get('currency') not in (None,'CNY','USD'):raise c.Problem('请选择币种')
     if page=='expenses' and values['category'] not in ('freight','installation','travel','rework','aftersales','other'):raise c.Problem('请选择费用类别')
     key=old['id'] if old else c.uid();stamp=c.now()
+    if page in KINDS:
+        terminal={'tasks':'done','installation':'accepted','issues':'closed'}[page]
+        values['completed_at']=(stamp if not old or old['status']!=terminal else old.get('completed_at')) if values['status']==terminal else None
     if old:
         db.execute('UPDATE '+table+' SET '+','.join(k+'=?' for k in values)+',version=version+1,updated_at=? WHERE id=?',(*values.values(),stamp,key))
     else:
